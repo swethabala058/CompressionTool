@@ -1,4 +1,5 @@
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -7,12 +8,17 @@ import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.*;
 
 public class CompressToolUI extends Application {
@@ -20,11 +26,30 @@ public class CompressToolUI extends Application {
     private File compressFile;
     private File decompressFile;
 
+    // UI Components
     private Label compressFileLabel = new Label("No file selected");
     private Label decompressFileLabel = new Label("No file selected");
     private TextArea statusArea = new TextArea();
     private ProgressBar compressProgress = new ProgressBar(0);
     private ProgressBar decompressProgress = new ProgressBar(0);
+    private Label compressProgressLabel = new Label("0%");
+    private Label decompressProgressLabel = new Label("0%");
+    
+    // Statistics
+    private AtomicInteger totalOperations = new AtomicInteger(0);
+    private AtomicLong totalBytesSaved = new AtomicLong(0);
+    private AtomicInteger filesCompressed = new AtomicInteger(0);
+    private AtomicInteger filesDecompressed = new AtomicInteger(0);
+    
+    // File info labels for compress tab
+    private Label compressFileNameLabel = new Label("Name: -");
+    private Label compressFileSizeLabel = new Label("Size: -");
+    private Label compressFilePathLabel = new Label("Path: -");
+    
+    // File info labels for decompress tab
+    private Label decompressFileNameLabel = new Label("Name: -");
+    private Label decompressFileSizeLabel = new Label("Size: -");
+    private Label decompressFilePathLabel = new Label("Path: -");
 
     public static void main(String[] args) {
         launch(args);
@@ -32,182 +57,831 @@ public class CompressToolUI extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        primaryStage.setTitle("Compression and Decompression Tool - JavaFX");
+        primaryStage.setTitle("🚀 Advanced File Compression Tool");
+        
+        // Apply modern styling
+        compressProgress.setStyle("-fx-accent: #4CAF50;");
+        decompressProgress.setStyle("-fx-accent: #FF9800;");
+        statusArea.setStyle("-fx-control-inner-background: #f8f9fa; -fx-border-color: #dee2e6;");
 
         TabPane tabPane = new TabPane();
+        tabPane.setStyle("-fx-background-color: white;");
 
-        Tab compressTab = new Tab("Compress");
-        compressTab.setContent(createCompressPane());
-        compressTab.setClosable(false);
+        Tab compressTab = createCompressTab();
+        Tab decompressTab = createDecompressTab();
+        Tab statsTab = createStatisticsTab();
 
-        Tab decompressTab = new Tab("Decompress");
-        decompressTab.setContent(createDecompressPane());
-        decompressTab.setClosable(false);
+        tabPane.getTabs().addAll(compressTab, decompressTab, statsTab);
 
-        tabPane.getTabs().addAll(compressTab, decompressTab);
+        VBox root = new VBox(10, createHeader(), tabPane, createStatusPane());
+        root.setPadding(new Insets(15));
+        root.setStyle("-fx-background-color: linear-gradient(to bottom, #f5f7fa, #c3cfe2);");
 
-        VBox root = new VBox(10, tabPane, createStatusPane());
-        root.setPadding(new Insets(10));
-
-        Scene scene = new Scene(root, 600, 400);
-        // scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm()); // Commented out as style.css does not exist
+        Scene scene = new Scene(root, 900, 700);
         primaryStage.setScene(scene);
+        primaryStage.setMinWidth(800);
+        primaryStage.setMinHeight(600);
         primaryStage.show();
     }
 
-    private Pane createCompressPane() {
-        Button chooseFileBtn = new Button("📁 Choose File to Compress");
-        chooseFileBtn.setTooltip(new Tooltip("Click to select a file for compression or drag and drop a file here"));
-        chooseFileBtn.setOnAction(e -> {
-            FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Select File to Compress");
-            File selectedFile = fileChooser.showOpenDialog(null);
-            if (selectedFile != null) {
-                compressFile = selectedFile;
-                compressFileLabel.setText(selectedFile.getAbsolutePath());
-                appendStatus("Selected file for compression: " + selectedFile.getName());
+    private VBox createHeader() {
+        Label titleLabel = new Label("🔧 Advanced File Compression Tool");
+        titleLabel.setFont(Font.font("System", FontWeight.BOLD, 24));
+        titleLabel.setTextFill(Color.web("#2c3e50"));
+        
+        Label subtitleLabel = new Label("Compress and decompress files with ease - GZIP & ZIP formats supported");
+        subtitleLabel.setFont(Font.font("System", 14));
+        subtitleLabel.setTextFill(Color.web("#7f8c8d"));
+        
+        VBox header = new VBox(5, titleLabel, subtitleLabel);
+        header.setAlignment(Pos.CENTER);
+        header.setPadding(new Insets(0, 0, 10, 0));
+        return header;
+    }
+
+    private Tab createCompressTab() {
+        Tab tab = new Tab("📦 Compress");
+        tab.setClosable(false);
+        
+        ScrollPane scrollPane = new ScrollPane(createCompressPane());
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
+        scrollPane.setStyle("-fx-background-color: transparent;");
+        tab.setContent(scrollPane);
+        return tab;
+    }
+
+    private Tab createDecompressTab() {
+        Tab tab = new Tab("📤 Decompress");
+        tab.setClosable(false);
+        
+        ScrollPane scrollPane = new ScrollPane(createDecompressPane());
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
+        scrollPane.setStyle("-fx-background-color: transparent;");
+        tab.setContent(scrollPane);
+        return tab;
+    }
+
+    private Tab createStatisticsTab() {
+        Tab tab = new Tab("📊 Statistics");
+        tab.setClosable(false);
+        
+        ScrollPane scrollPane = new ScrollPane(createStatisticsPane());
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
+        scrollPane.setStyle("-fx-background-color: transparent;");
+        tab.setContent(scrollPane);
+        
+        return tab;
+    }
+
+    private VBox createStatisticsPane() {
+        VBox statsPane = new VBox(20);
+        statsPane.setPadding(new Insets(25));
+        statsPane.setAlignment(Pos.TOP_CENTER);
+        statsPane.setStyle("-fx-background-color: white; -fx-border-radius: 10; -fx-background-radius: 10;");
+        
+        Label statsTitle = new Label("Compression Statistics");
+        statsTitle.setFont(Font.font("System", FontWeight.BOLD, 22));
+        statsTitle.setTextFill(Color.web("#2c3e50"));
+        
+        // Stats cards in a grid
+        GridPane statsGrid = new GridPane();
+        statsGrid.setHgap(20);
+        statsGrid.setVgap(20);
+        statsGrid.setAlignment(Pos.CENTER);
+        
+        // Create dynamic stat cards that can be updated
+        VBox totalOpsCard = createStatCard("📁 Total Operations", 
+            String.valueOf(totalOperations.get()), 
+            "All compression and decompression operations");
+        
+        VBox spaceSavedCard = createStatCard("💾 Total Space Saved", 
+            formatFileSize(totalBytesSaved.get()), 
+            "Bytes saved through compression");
+        
+        VBox filesCompressedCard = createStatCard("🗜️ Files Compressed", 
+            String.valueOf(filesCompressed.get()), 
+            "Successful compression operations");
+        
+        VBox filesDecompressedCard = createStatCard("📤 Files Decompressed", 
+            String.valueOf(filesDecompressed.get()), 
+            "Successful decompression operations");
+        
+        VBox currentDirCard = createStatCard("⚡ Current Directory", 
+            System.getProperty("user.dir"), 
+            "Working directory");
+        
+        VBox availableMemoryCard = createStatCard("💻 Available Memory", 
+            formatFileSize(Runtime.getRuntime().freeMemory()), 
+            "JVM free memory");
+        
+        // Row 1
+        statsGrid.add(totalOpsCard, 0, 0);
+        statsGrid.add(spaceSavedCard, 1, 0);
+        
+        // Row 2
+        statsGrid.add(filesCompressedCard, 0, 1);
+        statsGrid.add(filesDecompressedCard, 1, 1);
+        
+        // Row 3
+        statsGrid.add(currentDirCard, 0, 2);
+        statsGrid.add(availableMemoryCard, 1, 2);
+        
+        // Store references to update labels later
+        totalOpsCard.setUserData(totalOperations);
+        spaceSavedCard.setUserData(totalBytesSaved);
+        filesCompressedCard.setUserData(filesCompressed);
+        filesDecompressedCard.setUserData(filesDecompressed);
+        
+        // Control buttons
+        HBox controlBox = new HBox(20);
+        controlBox.setAlignment(Pos.CENTER);
+        
+        Button refreshStatsBtn = createStyledButton("🔄 Refresh Statistics", "#3498db");
+        refreshStatsBtn.setOnAction(e -> refreshStatistics());
+        
+        Button resetStatsBtn = createStyledButton("🔄 Reset Statistics", "#e74c3c");
+        resetStatsBtn.setOnAction(e -> resetStatistics());
+        
+        controlBox.getChildren().addAll(refreshStatsBtn, resetStatsBtn);
+        
+        statsPane.getChildren().addAll(statsTitle, statsGrid, controlBox);
+        return statsPane;
+    }
+
+    private VBox createStatCard(String title, String value, String description) {
+        VBox card = new VBox(8);
+        card.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #dee2e6; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 20; -fx-alignment: center-left;");
+        card.setPrefWidth(250);
+        card.setMinHeight(120);
+        
+        Label titleLabel = new Label(title);
+        titleLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        titleLabel.setTextFill(Color.web("#7f8c8d"));
+        
+        Label valueLabel = new Label(value);
+        valueLabel.setFont(Font.font("System", FontWeight.BOLD, 20));
+        valueLabel.setTextFill(Color.web("#2c3e50"));
+        valueLabel.setWrapText(true);
+        
+        Label descLabel = new Label(description);
+        descLabel.setFont(Font.font("System", 11));
+        descLabel.setTextFill(Color.web("#95a5a6"));
+        descLabel.setWrapText(true);
+        
+        card.getChildren().addAll(titleLabel, valueLabel, descLabel);
+        return card;
+    }
+
+    private void refreshStatistics() {
+        Platform.runLater(() -> {
+            // Update all statistic cards in the statistics tab
+            Tab statsTab = ((TabPane)((VBox)statusArea.getParent().getParent().getParent()).getChildren().get(1)).getTabs().get(2);
+            ScrollPane scrollPane = (ScrollPane) statsTab.getContent();
+            VBox statsPane = (VBox) scrollPane.getContent();
+            
+            GridPane statsGrid = (GridPane) statsPane.getChildren().get(1);
+            
+            // Update each card
+            for (javafx.scene.Node node : statsGrid.getChildren()) {
+                if (node instanceof VBox) {
+                    VBox card = (VBox) node;
+                    Label titleLabel = (Label) card.getChildren().get(0);
+                    Label valueLabel = (Label) card.getChildren().get(1);
+                    
+                    switch (titleLabel.getText()) {
+                        case "📁 Total Operations":
+                            valueLabel.setText(String.valueOf(totalOperations.get()));
+                            break;
+                        case "💾 Total Space Saved":
+                            valueLabel.setText(formatFileSize(totalBytesSaved.get()));
+                            break;
+                        case "🗜️ Files Compressed":
+                            valueLabel.setText(String.valueOf(filesCompressed.get()));
+                            break;
+                        case "📤 Files Decompressed":
+                            valueLabel.setText(String.valueOf(filesDecompressed.get()));
+                            break;
+                        case "⚡ Current Directory":
+                            valueLabel.setText(System.getProperty("user.dir"));
+                            break;
+                        case "💻 Available Memory":
+                            valueLabel.setText(formatFileSize(Runtime.getRuntime().freeMemory()));
+                            break;
+                    }
+                }
             }
         });
+        appendStatus("📊 Statistics refreshed");
+    }
 
-        Button compressBtn = new Button("🗜️ Compress (GZIP)");
-        compressBtn.setTooltip(new Tooltip("Compress the selected file using GZIP"));
-        compressBtn.setOnAction(e -> {
-            if (compressFile == null) {
-                appendStatus("Please select a file to compress.");
+    private void resetStatistics() {
+        totalOperations.set(0);
+        totalBytesSaved.set(0);
+        filesCompressed.set(0);
+        filesDecompressed.set(0);
+        appendStatus("🔄 Statistics reset");
+        refreshStatistics();
+    }
+
+    private VBox createCompressPane() {
+        VBox mainVBox = new VBox(20);
+        mainVBox.setPadding(new Insets(25));
+        mainVBox.setStyle("-fx-background-color: white; -fx-border-radius: 10; -fx-background-radius: 10;");
+
+        // Title
+        Label titleLabel = new Label("File Compression");
+        titleLabel.setFont(Font.font("System", FontWeight.BOLD, 22));
+        titleLabel.setTextFill(Color.web("#2c3e50"));
+
+        // Compression type selection
+        VBox typeBox = new VBox(10);
+        Label typeLabel = new Label("Select Compression Type:");
+        typeLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        ToggleGroup compressionGroup = new ToggleGroup();
+        RadioButton gzipRadio = new RadioButton("🎯 GZIP Compression (Single File)");
+        RadioButton zipRadio = new RadioButton("📦 ZIP Archive (Multiple Files/Folders)");
+        gzipRadio.setToggleGroup(compressionGroup);
+        zipRadio.setToggleGroup(compressionGroup);
+        gzipRadio.setSelected(true);
+
+        VBox radioBox = new VBox(8, gzipRadio, zipRadio);
+        radioBox.setPadding(new Insets(15));
+        radioBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8; -fx-background-color: #f8f9fa;");
+        
+        typeBox.getChildren().addAll(typeLabel, radioBox);
+
+        // File selection section
+        VBox fileSelectionBox = new VBox(15);
+        Label selectLabel = new Label("Select Source:");
+        selectLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        HBox buttonBox = new HBox(15);
+        Button chooseFileBtn = createStyledButton("📁 Choose File/Folder", "#3498db");
+        chooseFileBtn.setTooltip(new Tooltip("Click to select a file or folder for compression\nor drag and drop files directly here"));
+        
+        Button clearSelectionBtn = createStyledButton("🗑️ Clear Selection", "#e74c3c");
+        clearSelectionBtn.setOnAction(e -> clearCompressSelection());
+        
+        buttonBox.getChildren().addAll(chooseFileBtn, clearSelectionBtn);
+
+        // File info display
+        VBox fileInfoBox = new VBox(8);
+        fileInfoBox.setStyle("-fx-border-color: #bdc3c7; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-background-color: #f8f9fa;");
+        Label fileInfoLabel = new Label("📄 File Information");
+        fileInfoLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        VBox fileDetails = new VBox(5);
+        compressFileNameLabel.setText("Name: -");
+        compressFileSizeLabel.setText("Size: -");
+        compressFilePathLabel.setText("Path: -");
+        compressFilePathLabel.setWrapText(true);
+        
+        fileDetails.getChildren().addAll(compressFileNameLabel, compressFileSizeLabel, compressFilePathLabel);
+        fileInfoBox.getChildren().addAll(fileInfoLabel, new Separator(), fileDetails);
+
+        // Compression buttons
+        HBox actionBox = new HBox(15);
+        actionBox.setAlignment(Pos.CENTER);
+        
+        Button compressGzipBtn = createStyledButton("🗜️ Compress to GZIP", "#27ae60");
+        compressGzipBtn.setTooltip(new Tooltip("Compress selected file using GZIP format"));
+        
+        Button compressZipBtn = createStyledButton("📦 Create ZIP Archive", "#2980b9");
+        compressZipBtn.setTooltip(new Tooltip("Create ZIP archive from selected files/folders"));
+
+        actionBox.getChildren().addAll(compressGzipBtn, compressZipBtn);
+
+        // Progress section
+        VBox progressBox = new VBox(8);
+        Label progressLabel = new Label("Compression Progress:");
+        progressLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        HBox progressBarBox = new HBox(10);
+        progressBarBox.setAlignment(Pos.CENTER_LEFT);
+        compressProgress.setPrefWidth(400);
+        progressBarBox.getChildren().addAll(compressProgress, compressProgressLabel);
+
+        progressBox.getChildren().addAll(progressLabel, progressBarBox);
+
+        // Add all to main layout
+        fileSelectionBox.getChildren().addAll(selectLabel, buttonBox);
+        mainVBox.getChildren().addAll(
+            titleLabel, typeBox, new Separator(), 
+            fileSelectionBox, fileInfoBox, new Separator(), 
+            actionBox, progressBox
+        );
+
+        // Event Handlers
+        chooseFileBtn.setOnAction(e -> handleFileSelection(gzipRadio.isSelected()));
+        
+        compressGzipBtn.setOnAction(e -> handleGzipCompression());
+        
+        compressZipBtn.setOnAction(e -> handleZipCompression());
+
+        // Drag and drop functionality
+        setupDragAndDrop(mainVBox, "compress");
+
+        return mainVBox;
+    }
+
+    private VBox createDecompressPane() {
+        VBox mainVBox = new VBox(20);
+        mainVBox.setPadding(new Insets(25));
+        mainVBox.setStyle("-fx-background-color: white; -fx-border-radius: 10; -fx-background-radius: 10;");
+
+        // Title
+        Label titleLabel = new Label("File Decompression");
+        titleLabel.setFont(Font.font("System", FontWeight.BOLD, 22));
+        titleLabel.setTextFill(Color.web("#2c3e50"));
+
+        // Archive type selection
+        VBox typeBox = new VBox(10);
+        Label typeLabel = new Label("Select Archive Type:");
+        typeLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        ToggleGroup decompressionGroup = new ToggleGroup();
+        RadioButton gzipRadio = new RadioButton("📄 GZIP File (.gz)");
+        RadioButton zipRadio = new RadioButton("📁 ZIP Archive (.zip)");
+        gzipRadio.setToggleGroup(decompressionGroup);
+        zipRadio.setToggleGroup(decompressionGroup);
+        gzipRadio.setSelected(true);
+
+        VBox radioBox = new VBox(8, gzipRadio, zipRadio);
+        radioBox.setPadding(new Insets(15));
+        radioBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8; -fx-background-color: #f8f9fa;");
+        
+        typeBox.getChildren().addAll(typeLabel, radioBox);
+
+        // File selection section
+        VBox fileSelectionBox = new VBox(15);
+        Label selectLabel = new Label("Select Archive File:");
+        selectLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        HBox buttonBox = new HBox(15);
+        Button chooseFileBtn = createStyledButton("📁 Choose Archive", "#3498db");
+        chooseFileBtn.setTooltip(new Tooltip("Click to select a .gz or .zip file for decompression\nor drag and drop files directly here"));
+        
+        Button clearSelectionBtn = createStyledButton("🗑️ Clear Selection", "#e74c3c");
+        clearSelectionBtn.setOnAction(e -> clearDecompressSelection());
+        
+        buttonBox.getChildren().addAll(chooseFileBtn, clearSelectionBtn);
+
+        // File info display
+        VBox fileInfoBox = new VBox(8);
+        fileInfoBox.setStyle("-fx-border-color: #bdc3c7; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-background-color: #f8f9fa;");
+        Label fileInfoLabel = new Label("📦 Archive Information");
+        fileInfoLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        VBox fileDetails = new VBox(5);
+        decompressFileNameLabel.setText("Name: -");
+        decompressFileSizeLabel.setText("Size: -");
+        decompressFilePathLabel.setText("Path: -");
+        decompressFilePathLabel.setWrapText(true);
+        
+        fileDetails.getChildren().addAll(decompressFileNameLabel, decompressFileSizeLabel, decompressFilePathLabel);
+        fileInfoBox.getChildren().addAll(fileInfoLabel, new Separator(), fileDetails);
+
+        // Decompression buttons
+        HBox actionBox = new HBox(15);
+        actionBox.setAlignment(Pos.CENTER);
+        
+        Button decompressGzipBtn = createStyledButton("📤 Extract GZIP", "#f39c12");
+        decompressGzipBtn.setTooltip(new Tooltip("Decompress selected .gz file"));
+        
+        Button decompressZipBtn = createStyledButton("📂 Extract ZIP", "#8e44ad");
+        decompressZipBtn.setTooltip(new Tooltip("Extract contents from ZIP archive"));
+
+        actionBox.getChildren().addAll(decompressGzipBtn, decompressZipBtn);
+
+        // Progress section
+        VBox progressBox = new VBox(8);
+        Label progressLabel = new Label("Extraction Progress:");
+        progressLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+        
+        HBox progressBarBox = new HBox(10);
+        progressBarBox.setAlignment(Pos.CENTER_LEFT);
+        decompressProgress.setPrefWidth(400);
+        progressBarBox.getChildren().addAll(decompressProgress, decompressProgressLabel);
+
+        progressBox.getChildren().addAll(progressLabel, progressBarBox);
+
+        // Add all to main layout
+        fileSelectionBox.getChildren().addAll(selectLabel, buttonBox);
+        mainVBox.getChildren().addAll(
+            titleLabel, typeBox, new Separator(), 
+            fileSelectionBox, fileInfoBox, new Separator(), 
+            actionBox, progressBox
+        );
+
+        // Event Handlers
+        chooseFileBtn.setOnAction(e -> handleArchiveSelection(gzipRadio.isSelected()));
+        
+        decompressGzipBtn.setOnAction(e -> handleGzipDecompression());
+        
+        decompressZipBtn.setOnAction(e -> handleZipDecompression());
+
+        // Drag and drop functionality
+        setupDragAndDrop(mainVBox, "decompress");
+
+        return mainVBox;
+    }
+
+    private Button createStyledButton(String text, String color) {
+        Button button = new Button(text);
+        button.setStyle(String.format(
+            "-fx-font-size: 14px; -fx-padding: 12 25; -fx-background-color: %s; -fx-text-fill: white; -fx-background-radius: 8; -fx-font-weight: bold;",
+            color
+        ));
+        button.setOnMouseEntered(e -> button.setStyle(String.format(
+            "-fx-font-size: 14px; -fx-padding: 12 25; -fx-background-color: derive(%s, 20%%); -fx-text-fill: white; -fx-background-radius: 8; -fx-font-weight: bold;",
+            color
+        )));
+        button.setOnMouseExited(e -> button.setStyle(String.format(
+            "-fx-font-size: 14px; -fx-padding: 12 25; -fx-background-color: %s; -fx-text-fill: white; -fx-background-radius: 8; -fx-font-weight: bold;",
+            color
+        )));
+        return button;
+    }
+
+    private void handleFileSelection(boolean isGzip) {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select File or Folder to Compress");
+        
+        // Set initial directory to user's home
+        fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+        
+        File selectedFile;
+        if (isGzip) {
+            // For GZIP, only allow single file selection
+            selectedFile = fileChooser.showOpenDialog(null);
+        } else {
+            // For ZIP, allow both files and folders - use directory chooser for folders
+            FileChooser.ExtensionFilter allFilter = new FileChooser.ExtensionFilter("All Files", "*.*");
+            fileChooser.getExtensionFilters().add(allFilter);
+            selectedFile = fileChooser.showOpenDialog(null);
+        }
+        
+        if (selectedFile != null) {
+            if (isGzip && selectedFile.isDirectory()) {
+                showAlert(Alert.AlertType.WARNING, "Invalid Selection", 
+                    "GZIP compression only works with single files. Please select a file, not a folder.");
                 return;
             }
-            compressProgress.setProgress(0);
+            setCompressFile(selectedFile);
+        }
+    }
+
+    private void handleArchiveSelection(boolean isGzip) {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select Archive File to Decompress");
+        fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+        
+        if (isGzip) {
+            FileChooser.ExtensionFilter gzipFilter = new FileChooser.ExtensionFilter("GZIP files (*.gz)", "*.gz");
+            fileChooser.getExtensionFilters().add(gzipFilter);
+            fileChooser.setSelectedExtensionFilter(gzipFilter);
+        } else {
+            FileChooser.ExtensionFilter zipFilter = new FileChooser.ExtensionFilter("ZIP files (*.zip)", "*.zip");
+            fileChooser.getExtensionFilters().add(zipFilter);
+            fileChooser.setSelectedExtensionFilter(zipFilter);
+        }
+        
+        File selectedFile = fileChooser.showOpenDialog(null);
+        if (selectedFile != null) {
+            setDecompressFile(selectedFile);
+        }
+    }
+
+    private void handleGzipCompression() {
+        if (compressFile == null) {
+            showAlert(Alert.AlertType.WARNING, "No File Selected", "Please select a file to compress.");
+            return;
+        }
+        if (compressFile.isDirectory()) {
+            showAlert(Alert.AlertType.WARNING, "Invalid Selection", "GZIP compression only works with single files, not folders.");
+            return;
+        }
+        
+        compressProgress.setProgress(0);
+        compressProgressLabel.setText("0%");
+        
+        new Thread(() -> {
             try {
                 File outputFile = new File(compressFile.getParent(), compressFile.getName() + ".gz");
+                long originalSize = compressFile.length();
                 compressGZIP(compressFile, outputFile);
-                appendStatus("Compression completed: " + outputFile.getAbsolutePath());
-                Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                alert.setTitle("Success");
-                alert.setHeaderText("Compression Completed");
-                alert.setContentText("File compressed successfully to " + outputFile.getAbsolutePath());
-                alert.showAndWait();
+                long compressedSize = outputFile.length();
+                long bytesSaved = originalSize - compressedSize;
+                
+                Platform.runLater(() -> {
+                    appendStatus("✅ GZIP Compression completed: " + outputFile.getName());
+                    appendStatus("📊 Compression stats: " + formatFileSize(originalSize) + " → " + 
+                                formatFileSize(compressedSize) + " (saved " + formatFileSize(bytesSaved) + ")");
+                    
+                    totalOperations.incrementAndGet();
+                    filesCompressed.incrementAndGet();
+                    totalBytesSaved.addAndGet(bytesSaved);
+                    
+                    showAlert(Alert.AlertType.INFORMATION, "Success", 
+                        "File compressed successfully!\n\n" +
+                        "Original: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
+                        "Compressed: " + outputFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                        "Space saved: " + formatFileSize(bytesSaved) + "\n" +
+                        "Location: " + outputFile.getParent());
+                        
+                    refreshStatistics();
+                });
             } catch (IOException ex) {
-                appendStatus("Error during compression: " + ex.getMessage());
-                Alert errorAlert = new Alert(Alert.AlertType.ERROR);
-                errorAlert.setTitle("Error");
-                errorAlert.setHeaderText("Compression Failed");
-                errorAlert.setContentText(ex.getMessage());
-                errorAlert.showAndWait();
+                Platform.runLater(() -> {
+                    appendStatus("❌ GZIP Compression failed: " + ex.getMessage());
+                    showAlert(Alert.AlertType.ERROR, "Compression Failed", ex.getMessage());
+                });
             }
-        });
-
-        VBox vbox = new VBox(10, chooseFileBtn, compressFileLabel, compressBtn, compressProgress);
-        vbox.setAlignment(Pos.CENTER_LEFT);
-        vbox.setPadding(new Insets(10));
-
-        // Drag and drop
-        vbox.setOnDragOver(event -> {
-            if (event.getGestureSource() != vbox && event.getDragboard().hasFiles()) {
-                event.acceptTransferModes(TransferMode.COPY_OR_MOVE);
-            }
-            event.consume();
-        });
-        vbox.setOnDragDropped(event -> {
-            Dragboard db = event.getDragboard();
-            boolean success = false;
-            if (db.hasFiles()) {
-                compressFile = db.getFiles().get(0);
-                compressFileLabel.setText(compressFile.getAbsolutePath());
-                appendStatus("Selected file for compression: " + compressFile.getName());
-                success = true;
-            }
-            event.setDropCompleted(success);
-            event.consume();
-        });
-
-        return vbox;
+        }).start();
     }
 
-    private Pane createDecompressPane() {
-        Button chooseFileBtn = new Button("📁 Choose File to Decompress (.gz)");
-        chooseFileBtn.setTooltip(new Tooltip("Click to select a .gz file for decompression or drag and drop a file here"));
-        chooseFileBtn.setOnAction(e -> {
-            FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Select File to Decompress");
-            FileChooser.ExtensionFilter extFilter = new FileChooser.ExtensionFilter("GZIP files (*.gz)", "*.gz");
-            fileChooser.getExtensionFilters().add(extFilter);
-            File selectedFile = fileChooser.showOpenDialog(null);
-            if (selectedFile != null) {
-                decompressFile = selectedFile;
-                decompressFileLabel.setText(selectedFile.getAbsolutePath());
-                appendStatus("Selected file for decompression: " + selectedFile.getName());
+    private void handleZipCompression() {
+        if (compressFile == null) {
+            showAlert(Alert.AlertType.WARNING, "No File/Folder Selected", "Please select a file or folder to compress.");
+            return;
+        }
+        
+        compressProgress.setProgress(0);
+        compressProgressLabel.setText("0%");
+        
+        new Thread(() -> {
+            try {
+                String baseName = compressFile.isDirectory() ? compressFile.getName() : 
+                                compressFile.getName().substring(0, compressFile.getName().lastIndexOf('.'));
+                File outputFile = new File(compressFile.getParent(), baseName + ".zip");
+                long originalSize = calculateTotalSize(compressFile);
+                compressZIP(compressFile, outputFile);
+                long compressedSize = outputFile.length();
+                long bytesSaved = originalSize - compressedSize;
+                
+                Platform.runLater(() -> {
+                    appendStatus("✅ ZIP Compression completed: " + outputFile.getName());
+                    appendStatus("📊 Compression stats: " + formatFileSize(originalSize) + " → " + 
+                                formatFileSize(compressedSize) + " (saved " + formatFileSize(bytesSaved) + ")");
+                    
+                    totalOperations.incrementAndGet();
+                    filesCompressed.incrementAndGet();
+                    totalBytesSaved.addAndGet(bytesSaved);
+                    
+                    showAlert(Alert.AlertType.INFORMATION, "Success", 
+                        "ZIP archive created successfully!\n\n" +
+                        "Source: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
+                        "Archive: " + outputFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                        "Space saved: " + formatFileSize(bytesSaved) + "\n" +
+                        "Location: " + outputFile.getParent());
+                        
+                    refreshStatistics();
+                });
+            } catch (IOException ex) {
+                Platform.runLater(() -> {
+                    appendStatus("❌ ZIP Compression failed: " + ex.getMessage());
+                    showAlert(Alert.AlertType.ERROR, "ZIP Compression Failed", ex.getMessage());
+                });
             }
-        });
+        }).start();
+    }
 
-        Button decompressBtn = new Button("📂 Decompress (GZIP)");
-        decompressBtn.setTooltip(new Tooltip("Decompress the selected .gz file"));
-        decompressBtn.setOnAction(e -> {
-            if (decompressFile == null) {
-                appendStatus("Please select a file to decompress.");
-                return;
-            }
-            decompressProgress.setProgress(0);
+    private void handleGzipDecompression() {
+        if (decompressFile == null) {
+            showAlert(Alert.AlertType.WARNING, "No File Selected", "Please select a .gz file to decompress.");
+            return;
+        }
+        if (!decompressFile.getName().toLowerCase().endsWith(".gz")) {
+            showAlert(Alert.AlertType.WARNING, "Invalid File", "Please select a valid .gz file for decompression.");
+            return;
+        }
+        
+        decompressProgress.setProgress(0);
+        decompressProgressLabel.setText("0%");
+        
+        new Thread(() -> {
             try {
                 String outputName = decompressFile.getName().replaceAll("\\.gz$", "");
+                // Remove .gz extension but keep the original file name
+                if (outputName.equals(decompressFile.getName())) {
+                    outputName = decompressFile.getName() + "_decompressed";
+                }
                 File outputFile = new File(decompressFile.getParent(), outputName);
+                long compressedSize = decompressFile.length();
                 decompressGZIP(decompressFile, outputFile);
-                appendStatus("Decompression completed: " + outputFile.getAbsolutePath());
-                Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                alert.setTitle("Success");
-                alert.setHeaderText("Decompression Completed");
-                alert.setContentText("File decompressed successfully to " + outputFile.getAbsolutePath());
-                alert.showAndWait();
+                long decompressedSize = outputFile.length();
+                
+                Platform.runLater(() -> {
+                    appendStatus("✅ GZIP Decompression completed: " + outputFile.getName());
+                    appendStatus("📊 Decompression stats: " + formatFileSize(compressedSize) + " → " + 
+                                formatFileSize(decompressedSize));
+                    
+                    totalOperations.incrementAndGet();
+                    filesDecompressed.incrementAndGet();
+                    
+                    showAlert(Alert.AlertType.INFORMATION, "Success", 
+                        "File decompressed successfully!\n\n" +
+                        "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                        "Extracted: " + outputFile.getName() + " (" + formatFileSize(decompressedSize) + ")\n" +
+                        "Location: " + outputFile.getParent());
+                        
+                    refreshStatistics();
+                });
             } catch (IOException ex) {
-                appendStatus("Error during decompression: " + ex.getMessage());
-                Alert errorAlert = new Alert(Alert.AlertType.ERROR);
-                errorAlert.setTitle("Error");
-                errorAlert.setHeaderText("Decompression Failed");
-                errorAlert.setContentText(ex.getMessage());
-                errorAlert.showAndWait();
+                Platform.runLater(() -> {
+                    appendStatus("❌ GZIP Decompression failed: " + ex.getMessage());
+                    showAlert(Alert.AlertType.ERROR, "Decompression Failed", ex.getMessage());
+                });
             }
-        });
+        }).start();
+    }
 
-        VBox vbox = new VBox(10, chooseFileBtn, decompressFileLabel, decompressBtn, decompressProgress);
-        vbox.setAlignment(Pos.CENTER_LEFT);
-        vbox.setPadding(new Insets(10));
+    private void handleZipDecompression() {
+        if (decompressFile == null) {
+            showAlert(Alert.AlertType.WARNING, "No File Selected", "Please select a .zip file to extract.");
+            return;
+        }
+        if (!decompressFile.getName().toLowerCase().endsWith(".zip")) {
+            showAlert(Alert.AlertType.WARNING, "Invalid File", "Please select a valid .zip file for extraction.");
+            return;
+        }
+        
+        decompressProgress.setProgress(0);
+        decompressProgressLabel.setText("0%");
+        
+        new Thread(() -> {
+            try {
+                String baseName = decompressFile.getName().replaceAll("\\.zip$", "");
+                // Remove .zip extension but keep the original name
+                if (baseName.equals(decompressFile.getName())) {
+                    baseName = decompressFile.getName() + "_extracted";
+                }
+                File outputDir = new File(decompressFile.getParent(), baseName);
+                long compressedSize = decompressFile.length();
+                int[] extractionStats = decompressZIP(decompressFile, outputDir);
+                
+                Platform.runLater(() -> {
+                    appendStatus("✅ ZIP Extraction completed: " + outputDir.getName());
+                    appendStatus("📊 Extraction stats: " + extractionStats[0] + " files, " + 
+                                extractionStats[1] + " folders extracted");
+                    
+                    totalOperations.incrementAndGet();
+                    filesDecompressed.incrementAndGet();
+                    
+                    showAlert(Alert.AlertType.INFORMATION, "Success", 
+                        "ZIP archive extracted successfully!\n\n" +
+                        "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                        "Extracted to: " + outputDir.getName() + "\n" +
+                        "Files: " + extractionStats[0] + ", Folders: " + extractionStats[1] + "\n" +
+                        "Location: " + outputDir.getParent());
+                        
+                    refreshStatistics();
+                });
+            } catch (IOException ex) {
+                Platform.runLater(() -> {
+                    appendStatus("❌ ZIP Extraction failed: " + ex.getMessage());
+                    showAlert(Alert.AlertType.ERROR, "ZIP Extraction Failed", ex.getMessage());
+                });
+            }
+        }).start();
+    }
 
-        // Drag and drop
-        vbox.setOnDragOver(event -> {
-            if (event.getGestureSource() != vbox && event.getDragboard().hasFiles()) {
+    private void setupDragAndDrop(Pane pane, String type) {
+        pane.setUserData(type);
+        
+        pane.setOnDragOver(event -> {
+            if (event.getGestureSource() != pane && event.getDragboard().hasFiles()) {
                 event.acceptTransferModes(TransferMode.COPY_OR_MOVE);
             }
             event.consume();
         });
-        vbox.setOnDragDropped(event -> {
+
+        pane.setOnDragDropped(event -> {
             Dragboard db = event.getDragboard();
             boolean success = false;
             if (db.hasFiles()) {
-                decompressFile = db.getFiles().get(0);
-                decompressFileLabel.setText(decompressFile.getAbsolutePath());
-                appendStatus("Selected file for decompression: " + decompressFile.getName());
+                File droppedFile = db.getFiles().get(0);
+                if ("compress".equals(type)) {
+                    setCompressFile(droppedFile);
+                } else {
+                    setDecompressFile(droppedFile);
+                }
                 success = true;
+                appendStatus("📁 File dropped: " + droppedFile.getName());
             }
             event.setDropCompleted(success);
             event.consume();
         });
-
-        return vbox;
     }
 
-    private Pane createStatusPane() {
+    private VBox createStatusPane() {
         statusArea.setEditable(false);
         statusArea.setWrapText(true);
         statusArea.setPrefHeight(150);
-        statusArea.setPromptText("Status messages will appear here...");
-        VBox vbox = new VBox(new Label("Status:"), statusArea);
+        statusArea.setStyle("-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 12px; " +
+                           "-fx-control-inner-background: #2c3e50; -fx-text-fill: #ecf0f1; " +
+                           "-fx-border-color: #34495e; -fx-border-radius: 5;");
+
+        // Toolbar
+        HBox toolbar = new HBox(15);
+        toolbar.setAlignment(Pos.CENTER_RIGHT);
+        
+        Button clearBtn = createStyledButton("🗑️ Clear Log", "#e74c3c");
+        clearBtn.setOnAction(e -> statusArea.clear());
+        
+        Button exportBtn = createStyledButton("💾 Export Log", "#3498db");
+        exportBtn.setOnAction(e -> exportLog());
+        
+        toolbar.getChildren().addAll(clearBtn, exportBtn);
+
+        VBox vbox = new VBox(8, new Label("📋 Operation Log:"), statusArea, toolbar);
         vbox.setPadding(new Insets(10, 0, 0, 0));
         return vbox;
     }
 
-    private void appendStatus(String message) {
-        statusArea.appendText(message + "\n");
+    private void exportLog() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Export Log File");
+        fileChooser.setInitialFileName("compression_log_" + 
+            new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date()) + ".txt");
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Text files (*.txt)", "*.txt"));
+        
+        File file = fileChooser.showSaveDialog(null);
+        if (file != null) {
+            try (PrintWriter writer = new PrintWriter(file)) {
+                writer.write(statusArea.getText());
+                appendStatus("✅ Log exported to: " + file.getAbsolutePath());
+            } catch (IOException e) {
+                appendStatus("❌ Failed to export log: " + e.getMessage());
+            }
+        }
     }
 
+    private void setCompressFile(File file) {
+        compressFile = file;
+        Platform.runLater(() -> {
+            compressFileNameLabel.setText("Name: " + file.getName());
+            compressFileSizeLabel.setText("Size: " + formatFileSize(file.length()));
+            compressFilePathLabel.setText("Path: " + file.getAbsolutePath());
+            appendStatus("📄 Selected for compression: " + file.getName() + " (" + formatFileSize(file.length()) + ")");
+        });
+    }
+
+    private void setDecompressFile(File file) {
+        decompressFile = file;
+        Platform.runLater(() -> {
+            decompressFileNameLabel.setText("Name: " + file.getName());
+            decompressFileSizeLabel.setText("Size: " + formatFileSize(file.length()));
+            decompressFilePathLabel.setText("Path: " + file.getAbsolutePath());
+            appendStatus("📦 Selected for decompression: " + file.getName() + " (" + formatFileSize(file.length()) + ")");
+        });
+    }
+
+    private void clearCompressSelection() {
+        compressFile = null;
+        Platform.runLater(() -> {
+            compressFileNameLabel.setText("Name: -");
+            compressFileSizeLabel.setText("Size: -");
+            compressFilePathLabel.setText("Path: -");
+            appendStatus("🗑️ Compression selection cleared");
+        });
+    }
+
+    private void clearDecompressSelection() {
+        decompressFile = null;
+        Platform.runLater(() -> {
+            decompressFileNameLabel.setText("Name: -");
+            decompressFileSizeLabel.setText("Size: -");
+            decompressFilePathLabel.setText("Path: -");
+            appendStatus("🗑️ Decompression selection cleared");
+        });
+    }
+
+    private void appendStatus(String message) {
+        String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
+        Platform.runLater(() -> {
+            statusArea.appendText("[" + timestamp + "] " + message + "\n");
+            // Auto-scroll to bottom
+            statusArea.selectPositionCaret(statusArea.getLength());
+            statusArea.deselect();
+        });
+    }
+
+    private void showAlert(Alert.AlertType type, String title, String message) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(type);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
+    }
+
+    // Enhanced Compression Methods with Progress Tracking
     private void compressGZIP(File sourceFile, File destFile) throws IOException {
         try (FileInputStream fis = new FileInputStream(sourceFile);
              FileOutputStream fos = new FileOutputStream(destFile);
@@ -221,11 +895,69 @@ public class CompressToolUI extends Application {
             while ((bytesRead = fis.read(buffer)) != -1) {
                 gzos.write(buffer, 0, bytesRead);
                 totalRead += bytesRead;
-                updateProgress(totalRead, fileSize, "Compressing");
+                updateCompressProgress(totalRead, fileSize);
             }
         }
     }
 
+    private void compressZIP(File source, File destFile) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(destFile);
+             ZipOutputStream zos = new ZipOutputStream(fos)) {
+
+            if (source.isDirectory()) {
+                zipDirectory(source, source, zos, calculateTotalSize(source));
+            } else {
+                zipFile(source, zos, source.length());
+            }
+        }
+    }
+
+    private void zipDirectory(File directory, File baseDir, ZipOutputStream zos, long totalSize) throws IOException {
+        File[] files = directory.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (file.isDirectory()) {
+                zipDirectory(file, baseDir, zos, totalSize);
+            } else {
+                String entryName = getRelativePath(file, baseDir);
+                zipFile(file, entryName, zos, totalSize);
+            }
+        }
+    }
+
+    private String getRelativePath(File file, File baseDir) {
+        String filePath = file.getAbsolutePath();
+        String basePath = baseDir.getAbsolutePath();
+        return filePath.substring(basePath.length() + 1);
+    }
+
+    private void zipFile(File file, ZipOutputStream zos, long totalSize) throws IOException {
+        zipFile(file, file.getName(), zos, totalSize);
+    }
+
+    private void zipFile(File file, String entryName, ZipOutputStream zos, long totalSize) throws IOException {
+        ZipEntry zipEntry = new ZipEntry(entryName);
+        zos.putNextEntry(zipEntry);
+
+        try (FileInputStream fis = new FileInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            long totalRead = 0;
+            long fileSize = file.length();
+
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                zos.write(buffer, 0, bytesRead);
+                totalRead += bytesRead;
+                // Update progress based on overall progress
+                updateCompressProgress(totalRead, totalSize);
+            }
+        }
+        zos.closeEntry();
+        appendStatus("  ➕ Added to ZIP: " + entryName);
+    }
+
+    // Enhanced Decompression Methods with Progress Tracking
     private void decompressGZIP(File sourceFile, File destFile) throws IOException {
         try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(sourceFile));
              FileOutputStream fos = new FileOutputStream(destFile)) {
@@ -238,21 +970,100 @@ public class CompressToolUI extends Application {
             while ((bytesRead = gzis.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
                 totalRead += bytesRead;
-                updateProgress(totalRead, fileSize, "Decompressing");
+                updateDecompressProgress(totalRead, fileSize);
             }
         }
     }
 
-    private void updateProgress(long current, long total, String action) {
-        int percent = (int) ((current * 100) / total);
-        String progressMessage = String.format("%s... %d%%", action, percent);
-        // Update status area on JavaFX Application Thread
-        javafx.application.Platform.runLater(() -> {
-            if (statusArea.getText().contains(progressMessage)) {
-                // Already showing this progress, do nothing
-            } else {
-                appendStatus(progressMessage);
+    private int[] decompressZIP(File sourceFile, File destDir) throws IOException {
+        if (!destDir.exists()) {
+            destDir.mkdirs();
+        }
+
+        int fileCount = 0;
+        int dirCount = 0;
+        long totalSize = sourceFile.length();
+        long processedSize = 0;
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(sourceFile))) {
+            ZipEntry entry;
+
+            while ((entry = zis.getNextEntry()) != null) {
+                String filePath = destDir.getAbsolutePath() + File.separator + entry.getName();
+                
+                // Security check - prevent zip slip attack
+                File outputFile = new File(filePath);
+                String canonicalDestPath = destDir.getCanonicalPath();
+                String canonicalOutputPath = outputFile.getCanonicalPath();
+                
+                if (!canonicalOutputPath.startsWith(canonicalDestPath + File.separator)) {
+                    throw new IOException("Potential zip slip attack detected: " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    outputFile.mkdirs();
+                    dirCount++;
+                    appendStatus("  📁 Created directory: " + entry.getName());
+                } else {
+                    File parent = outputFile.getParentFile();
+                    if (!parent.exists()) {
+                        parent.mkdirs();
+                    }
+
+                    try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = zis.read(buffer)) != -1) {
+                            fos.write(buffer, 0, bytesRead);
+                            processedSize += bytesRead;
+                            updateDecompressProgress(processedSize, totalSize);
+                        }
+                    }
+                    fileCount++;
+                    appendStatus("  📄 Extracted: " + entry.getName());
+                }
+                zis.closeEntry();
             }
+        }
+        
+        return new int[]{fileCount, dirCount};
+    }
+
+    private void updateCompressProgress(long current, long total) {
+        double progress = total > 0 ? (double) current / total : 0;
+        Platform.runLater(() -> {
+            compressProgress.setProgress(progress);
+            compressProgressLabel.setText(String.format("%.0f%%", progress * 100));
         });
+    }
+
+    private void updateDecompressProgress(long current, long total) {
+        double progress = total > 0 ? (double) current / total : 0;
+        Platform.runLater(() -> {
+            decompressProgress.setProgress(progress);
+            decompressProgressLabel.setText(String.format("%.0f%%", progress * 100));
+        });
+    }
+
+    private long calculateTotalSize(File file) {
+        long size = 0;
+        if (file.isFile()) {
+            return file.length();
+        } else if (file.isDirectory()) {
+            File[] files = file.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    size += calculateTotalSize(f);
+                }
+            }
+        }
+        return size;
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 }
