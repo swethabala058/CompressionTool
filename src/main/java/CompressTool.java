@@ -291,16 +291,17 @@ public class CompressTool {
         String fileName = sourceFile.getName();
         String destPath;
         
+        // FIXED: Proper file naming with _decompressed suffix
         if (fileName.toLowerCase().endsWith(".gz")) {
             // Remove .gz extension and add _decompressed
             String baseName = fileName.substring(0, fileName.length() - 3);
             destPath = sourceDir + File.separator + baseName + "_decompressed";
         } else {
-            // For non-gz files, just add _decompressed
+            // For non-gz files, just add _decompressed to the original name
             destPath = sourceDir + File.separator + fileName + "_decompressed";
         }
-        
-        // Handle file name conflicts
+
+        // FIXED: Check if file already exists and handle conflicts properly
         File destFile = new File(destPath);
         int counter = 1;
         while (destFile.exists()) {
@@ -329,6 +330,13 @@ public class CompressTool {
                 return;
             }
 
+            // FIXED: Ensure parent directory exists
+            File outputFile = new File(destPath);
+            File parentDir = outputFile.getParentFile();
+            if (!parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+
             try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(sourceFile));
                  FileOutputStream fos = new FileOutputStream(destPath)) {
                 
@@ -341,12 +349,24 @@ public class CompressTool {
                     decompressedSize += bytesRead;
                     System.out.print("▓");
                 }
+                // FIXED: Force flush and sync to ensure file is written
                 fos.flush();
+                fos.getFD().sync();
             }
             
             long endTime = System.currentTimeMillis();
             
             System.out.println("]");
+            
+            // FIXED: Enhanced file verification
+            File finalOutputFile = new File(destPath);
+            if (!finalOutputFile.exists()) {
+                throw new IOException("Output file was not created: " + destPath);
+            }
+            if (finalOutputFile.length() == 0) {
+                throw new IOException("Output file is empty: " + destPath);
+            }
+            
             System.out.println("✅ " + getCurrentTime() + " Decompression completed!");
             System.out.println("═".repeat(50));
             System.out.printf("Compressed size:   %s\n", formatBytes(compressedSize));
@@ -354,22 +374,35 @@ public class CompressTool {
             System.out.printf("Size difference:   %s\n", formatBytes(decompressedSize - compressedSize));
             System.out.printf("Time taken:        %d ms\n", (endTime - startTime));
             System.out.println("📍 Source:         " + sourceFile.getAbsolutePath());
-            System.out.println("📍 Decompressed:   " + new File(destPath).getAbsolutePath());
+            System.out.println("📍 Decompressed:   " + finalOutputFile.getAbsolutePath());
             
-            // Verify file creation
-            File outputFile = new File(destPath);
-            if (outputFile.exists() && outputFile.length() > 0) {
+            // Enhanced verification
+            if (finalOutputFile.exists() && finalOutputFile.length() > 0) {
                 System.out.println("✅ Verification: File successfully created and saved!");
                 System.out.println("✅ File naming: Used '_decompressed' suffix as requested");
+                System.out.println("📁 File saved as: " + finalOutputFile.getName());
+                System.out.println("📁 Location: " + finalOutputFile.getAbsolutePath());
+                System.out.println("💾 Size: " + formatBytes(finalOutputFile.length()));
             } else {
                 System.out.println("❌ Verification: File was not created properly!");
+                if (finalOutputFile.exists()) {
+                    System.out.println("⚠️  File exists but is empty");
+                } else {
+                    System.out.println("⚠️  File does not exist");
+                }
             }
             
-            totalOperations++;
+            totalOperations++;  // Increment operations counter
             
         } catch (IOException e) {
             System.out.println("\n❌ " + getCurrentTime() + " Error during decompression: " + e.getMessage());
-            new File(destPath).delete();
+            System.out.println("🔧 Error details: " + e.getClass().getSimpleName());
+            // Clean up any partially created file
+            File failedFile = new File(destPath);
+            if (failedFile.exists()) {
+                failedFile.delete();
+                System.out.println("🧹 Cleaned up partially created file");
+            }
         }
     }
     
@@ -582,6 +615,7 @@ public class CompressTool {
                                 fileSize += bytesRead;
                             }
                             fos.flush();
+                            fos.getFD().sync(); // Force sync to disk
                             totalExtractedSize += fileSize;
                             fileCount++;
                             System.out.print("▓");
@@ -613,7 +647,7 @@ public class CompressTool {
                 System.out.println("⚠️  Warning: No files found in extraction directory!");
             }
             
-            totalOperations++;
+            totalOperations++;  // Increment operations counter
             
         } catch (IOException e) {
             System.out.println("\n❌ " + getCurrentTime() + " Error during ZIP decompression: " + e.getMessage());
