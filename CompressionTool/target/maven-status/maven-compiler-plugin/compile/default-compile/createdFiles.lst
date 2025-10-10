@@ -1,2 +1,5 @@
+com\example\compressiontool\CompressionService.class
+com\example\compressiontool\CompressionController.class
+com\example\compressiontool\CompressionToolApplication.class
 CompressTool.class
 CompressToolUI.class

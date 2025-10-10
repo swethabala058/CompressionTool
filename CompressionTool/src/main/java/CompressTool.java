@@ -5,9 +5,13 @@ import java.time.format.*;
 import java.util.*;
 import java.util.zip.*;
 
+import com.example.compressiontool.CompressionService;
+
 public class CompressTool {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    private static CompressionService compressionService = new CompressionService();
     
     // Statistics tracking
     private static int totalOperations = 0;
@@ -296,73 +300,41 @@ public class CompressTool {
             System.out.println("❌ No file selected for compression. Please select a file first.");
             return;
         }
-        
+
         if (currentCompressFile.isDirectory()) {
             System.out.println("❌ GZIP compression only works with single files, not folders.");
             System.out.println("💡 Please use ZIP compression for folders.");
             return;
         }
-        
+
         System.out.println("\n🎯 GZIP COMPRESSION");
         System.out.println("═".repeat(60));
-        
+
         try {
-            String sourceDir = currentCompressFile.getParent();
-            String fileName = currentCompressFile.getName();
-            String destPath = sourceDir + File.separator + fileName + ".gz";
-            
-            // Handle naming conflicts
-            File destFile = new File(destPath);
-            int counter = 1;
-            while (destFile.exists()) {
-                String nameWithoutExt = fileName.contains(".") ? 
-                    fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-                destPath = sourceDir + File.separator + nameWithoutExt + "_" + counter + ".gz";
-                destFile = new File(destPath);
-                counter++;
-            }
-            
+            String baseName = currentCompressFile.getName().contains(".") ?
+                    currentCompressFile.getName().substring(0, currentCompressFile.getName().lastIndexOf('.')) :
+                    currentCompressFile.getName();
+            File outputFile = compressionService.getUniqueOutputFile(currentCompressFile.getParentFile(), baseName, ".gz");
+
             System.out.println("📄 Source: " + currentCompressFile.getName());
-            System.out.println("💾 Output: " + new File(destPath).getName());
+            System.out.println("💾 Output: " + outputFile.getName());
             System.out.println("⏰ " + getCurrentTime() + " Starting compression...");
-            
+
             long startTime = System.currentTimeMillis();
             long originalSize = currentCompressFile.length();
-            
-            try (FileInputStream fis = new FileInputStream(currentCompressFile);
-                 FileOutputStream fos = new FileOutputStream(destPath);
-                 GZIPOutputStream gzos = new GZIPOutputStream(fos)) {
-                
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                long totalBytesRead = 0;
-                
-                System.out.print("📊 Progress: [");
-                int lastProgress = -1;
-                while ((bytesRead = fis.read(buffer)) != -1) {
-                    gzos.write(buffer, 0, bytesRead);
-                    totalBytesRead += bytesRead;
-                    
-                    int progress = (int) ((totalBytesRead * 50) / originalSize);
-                    if (progress != lastProgress) {
-                        System.out.print("=".repeat(progress) + ">" + " ".repeat(50 - progress) + "]");
-                        System.out.printf(" %d%%\r", Math.min(100, (progress * 2)));
-                        lastProgress = progress;
-                    }
-                }
-            }
-            
+
+            compressionService.compressGZIP(currentCompressFile, outputFile);
+
             long endTime = System.currentTimeMillis();
-            File compressedFile = new File(destPath);
-            long compressedSize = compressedFile.length();
+            long compressedSize = outputFile.length();
             long bytesSaved = originalSize - compressedSize;
-            
+
             // Update output information
-            updateOutputInfo(compressedFile, originalSize, compressedSize, "compression");
-            
+            updateOutputInfo(outputFile, originalSize, compressedSize, "compression");
+
             // Store the output file reference
-            currentCompressOutput = compressedFile;
-            
+            currentCompressOutput = outputFile;
+
             System.out.println("\n✅ " + getCurrentTime() + " Compression completed!");
             System.out.println("═".repeat(60));
             System.out.printf("📊 Original size:    %s\n", formatBytes(originalSize));
@@ -370,18 +342,18 @@ public class CompressTool {
             System.out.printf("📈 Compression ratio: %.1f%%\n", (1 - (double)compressedSize / originalSize) * 100);
             System.out.printf("💾 Space saved:      %s\n", formatBytes(bytesSaved));
             System.out.printf("⏱️  Time taken:       %d ms\n", (endTime - startTime));
-            
+
             // Display UPDATED file information with output details
             System.out.println("\n📋 UPDATED FILE INFORMATION");
             System.out.println("═".repeat(60));
             displayFileInfo(currentCompressFile, "compression");
-            
+
             // Update statistics
             totalOperations++;
             filesCompressed++;
             totalBytesSaved += bytesSaved;
             saveStatistics();
-            
+
         } catch (IOException e) {
             System.out.println("\n❌ " + getCurrentTime() + " Error during compression: " + e.getMessage());
         }
@@ -392,104 +364,53 @@ public class CompressTool {
             System.out.println("❌ No file selected for decompression. Please select a file first.");
             return;
         }
-        
+
         if (!currentDecompressFile.getName().toLowerCase().endsWith(".gz")) {
             System.out.println("❌ Please select a .gz file for GZIP decompression.");
             return;
         }
-        
+
         System.out.println("\n🎯 GZIP DECOMPRESSION");
         System.out.println("═".repeat(60));
-        
+
         try {
-            String sourceDir = currentDecompressFile.getParent();
-            String fileName = currentDecompressFile.getName();
-            String destPath;
-            
-            if (fileName.toLowerCase().endsWith(".gz")) {
-                String baseName = fileName.substring(0, fileName.length() - 3);
-                destPath = sourceDir + File.separator + baseName + "_decompressed";
-            } else {
-                destPath = sourceDir + File.separator + fileName + "_decompressed";
-            }
-            
-            // Handle naming conflicts
-            File destFile = new File(destPath);
-            int counter = 1;
-            while (destFile.exists()) {
-                String nameWithoutExt = destPath.contains(".") ? 
-                    destPath.substring(0, destPath.lastIndexOf('.')) : destPath;
-                String extension = destPath.contains(".") ? 
-                    destPath.substring(destPath.lastIndexOf('.')) : "";
-                destPath = nameWithoutExt + "_" + counter + extension;
-                destFile = new File(destPath);
-                counter++;
-            }
-            
+            String baseName = currentDecompressFile.getName().substring(0, currentDecompressFile.getName().length() - 3);
+            File outputFile = compressionService.getUniqueOutputFile(currentDecompressFile.getParentFile(), baseName + "_decompressed", "");
+
             System.out.println("📦 Source: " + currentDecompressFile.getName());
-            System.out.println("💾 Output: " + new File(destPath).getName());
+            System.out.println("💾 Output: " + outputFile.getName());
             System.out.println("⏰ " + getCurrentTime() + " Starting decompression...");
-            
+
             long startTime = System.currentTimeMillis();
             long compressedSize = currentDecompressFile.length();
-            long decompressedSize = 0;
-            
-            // Ensure parent directory exists
-            File outputFile = new File(destPath);
-            File parentDir = outputFile.getParentFile();
-            if (!parentDir.exists()) {
-                parentDir.mkdirs();
-            }
-            
-            try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(currentDecompressFile));
-                 FileOutputStream fos = new FileOutputStream(destPath)) {
-                
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                
-                System.out.print("📊 Progress: [");
-                while ((bytesRead = gzis.read(buffer)) != -1) {
-                    fos.write(buffer, 0, bytesRead);
-                    decompressedSize += bytesRead;
-                    System.out.print("▓");
-                }
-                fos.flush();
-                fos.getFD().sync();
-            }
-            
+
+            long decompressedSize = compressionService.decompressGZIP(currentDecompressFile, outputFile);
+
             long endTime = System.currentTimeMillis();
-            
-            System.out.println("]");
-            
-            // Verify file creation
-            File finalOutputFile = new File(destPath);
-            if (!finalOutputFile.exists() || finalOutputFile.length() == 0) {
-                throw new IOException("Output file was not created properly");
-            }
-            
+
             // Update output information
-            updateOutputInfo(finalOutputFile, compressedSize, decompressedSize, "decompression");
-            
+            updateOutputInfo(outputFile, compressedSize, decompressedSize, "decompression");
+
             // Store the output file reference
-            currentDecompressOutput = finalOutputFile;
-            
+            currentDecompressOutput = outputFile;
+
             System.out.println("✅ " + getCurrentTime() + " Decompression completed!");
             System.out.println("═".repeat(60));
             System.out.printf("📊 Compressed size:   %s\n", formatBytes(compressedSize));
             System.out.printf("📊 Decompressed size: %s\n", formatBytes(decompressedSize));
             System.out.printf("📈 Size difference:   %s\n", formatBytes(decompressedSize - compressedSize));
             System.out.printf("⏱️  Time taken:        %d ms\n", (endTime - startTime));
-            
+
             // Display UPDATED file information with output details
             System.out.println("\n📋 UPDATED FILE INFORMATION");
             System.out.println("═".repeat(60));
             displayFileInfo(currentDecompressFile, "decompression");
-            
+
             // Update statistics
             totalOperations++;
             filesDecompressed++;
             saveStatistics();
-            
+
         } catch (IOException e) {
             System.out.println("\n❌ " + getCurrentTime() + " Error during decompression: " + e.getMessage());
         }
@@ -505,51 +426,30 @@ public class CompressTool {
         System.out.println("═".repeat(60));
         
         try {
-            String sourceDir = currentCompressFile.getParent();
-            String fileName = currentCompressFile.getName();
-            String baseName = currentCompressFile.isDirectory() ? fileName :
-                    fileName.contains(".") ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-            String destPath = sourceDir + File.separator + baseName + ".zip";
+            String baseName = currentCompressFile.getName().contains(".") ?
+                    currentCompressFile.getName().substring(0, currentCompressFile.getName().lastIndexOf('.')) :
+                    currentCompressFile.getName();
+            File outputFile = compressionService.getUniqueOutputFile(currentCompressFile.getParentFile(), baseName, ".zip");
             
-            // Handle naming conflicts
-            File destFile = new File(destPath);
-            int counter = 1;
-            while (destFile.exists()) {
-                destPath = sourceDir + File.separator + baseName + "_" + counter + ".zip";
-                destFile = new File(destPath);
-                counter++;
-            }
-            
-            long originalSize = calculateTotalSize(currentCompressFile);
+            long originalSize = compressionService.calculateTotalSize(currentCompressFile);
             
             System.out.println("📄 Source: " + currentCompressFile.getName());
-            System.out.println("💾 Output: " + new File(destPath).getName());
+            System.out.println("💾 Output: " + outputFile.getName());
             System.out.println("⏰ " + getCurrentTime() + " Starting ZIP compression...");
             
             long startTime = System.currentTimeMillis();
             
-            try (FileOutputStream fos = new FileOutputStream(destPath);
-                 ZipOutputStream zos = new ZipOutputStream(fos)) {
-                
-                if (currentCompressFile.isDirectory()) {
-                    System.out.println("📁 Zipping directory: " + currentCompressFile.getName());
-                    zipDirectory(currentCompressFile, currentCompressFile.getName(), zos);
-                } else {
-                    System.out.println("📄 Zipping file: " + currentCompressFile.getName());
-                    addFileToZip(currentCompressFile, currentCompressFile.getName(), zos);
-                }
-            }
+            compressionService.compressZIP(currentCompressFile, outputFile);
             
             long endTime = System.currentTimeMillis();
-            File compressedFile = new File(destPath);
-            long compressedSize = compressedFile.length();
+            long compressedSize = outputFile.length();
             long bytesSaved = originalSize - compressedSize;
             
             // Update output information
-            updateOutputInfo(compressedFile, originalSize, compressedSize, "compression");
+            updateOutputInfo(outputFile, originalSize, compressedSize, "compression");
             
             // Store the output file reference
-            currentCompressOutput = compressedFile;
+            currentCompressOutput = outputFile;
             
             System.out.println("✅ " + getCurrentTime() + " ZIP compression completed!");
             System.out.println("═".repeat(60));
@@ -580,111 +480,50 @@ public class CompressTool {
             System.out.println("❌ No file selected for decompression. Please select a file first.");
             return;
         }
-        
+
         if (!currentDecompressFile.getName().toLowerCase().endsWith(".zip")) {
             System.out.println("❌ Please select a .zip file for ZIP decompression.");
             return;
         }
-        
+
         System.out.println("\n🎯 ZIP DECOMPRESSION");
         System.out.println("═".repeat(60));
-        
+
         try {
-            String zipDir = currentDecompressFile.getParent();
-            String zipFileName = currentDecompressFile.getName();
-            String baseName = zipFileName.contains(".") ? 
-                zipFileName.substring(0, zipFileName.lastIndexOf('.')) : zipFileName;
-            String destDirectory = zipDir + File.separator + baseName + "_decompressed";
-            
+            String baseName = currentDecompressFile.getName().contains(".") ?
+                currentDecompressFile.getName().substring(0, currentDecompressFile.getName().lastIndexOf('.')) :
+                currentDecompressFile.getName();
+            File outputDir = new File(currentDecompressFile.getParentFile(), baseName + "_decompressed");
+
             // Handle directory name conflicts
-            File destDir = new File(destDirectory);
             int counter = 1;
-            while (destDir.exists()) {
-                destDirectory = zipDir + File.separator + baseName + "_decompressed_" + counter;
-                destDir = new File(destDirectory);
+            while (outputDir.exists()) {
+                outputDir = new File(currentDecompressFile.getParentFile(), baseName + "_decompressed_" + counter);
                 counter++;
             }
-            
+
             long compressedSize = currentDecompressFile.length();
-            
+
             System.out.println("📦 ZIP file: " + currentDecompressFile.getName());
-            System.out.println("💾 Extract to: " + new File(destDirectory).getName());
-            
-            // Create destination directory
-            if (!destDir.mkdirs()) {
-                System.out.println("❌ Error: Could not create destination directory: " + destDirectory);
-                return;
-            }
-            
+            System.out.println("💾 Extract to: " + outputDir.getName());
             System.out.println("⏰ " + getCurrentTime() + " Starting ZIP decompression...");
-            
+
             long startTime = System.currentTimeMillis();
-            int fileCount = 0;
-            int dirCount = 0;
-            long totalExtractedSize = 0;
-            
-            try (ZipInputStream zis = new ZipInputStream(new FileInputStream(currentDecompressFile))) {
-                ZipEntry zipEntry;
-                
-                System.out.print("📊 Extracting: ");
-                
-                while ((zipEntry = zis.getNextEntry()) != null) {
-                    String entryName = zipEntry.getName();
-                    String filePath = destDirectory + File.separator + entryName;
-                    
-                    // Security check
-                    File outputFile = new File(filePath);
-                    String canonicalDestPath = outputFile.getCanonicalPath();
-                    if (!canonicalDestPath.startsWith(destDir.getCanonicalPath() + File.separator)) {
-                        System.out.println("\n❌ Security: Skipping malicious path - " + entryName);
-                        zis.closeEntry();
-                        continue;
-                    }
-                    
-                    if (zipEntry.isDirectory()) {
-                        if (!outputFile.exists() && !outputFile.mkdirs()) {
-                            System.out.println("\n⚠️  Warning: Could not create directory - " + entryName);
-                        } else {
-                            dirCount++;
-                        }
-                    } else {
-                        File parentDirFile = outputFile.getParentFile();
-                        if (!parentDirFile.exists() && !parentDirFile.mkdirs()) {
-                            System.out.println("\n❌ Error: Could not create parent directory for - " + entryName);
-                            zis.closeEntry();
-                            continue;
-                        }
-                        
-                        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                            byte[] buffer = new byte[8192];
-                            int bytesRead;
-                            long fileSize = 0;
-                            
-                            while ((bytesRead = zis.read(buffer)) != -1) {
-                                fos.write(buffer, 0, bytesRead);
-                                fileSize += bytesRead;
-                            }
-                            fos.flush();
-                            fos.getFD().sync();
-                            totalExtractedSize += fileSize;
-                            fileCount++;
-                            System.out.print("▓");
-                        }
-                    }
-                    zis.closeEntry();
-                }
-            }
-            
+
+            long[] stats = compressionService.decompressZIP(currentDecompressFile, outputDir);
+
             long endTime = System.currentTimeMillis();
-            
-            System.out.println();
-            
+
+            int fileCount = (int) stats[0];
+            int dirCount = (int) stats[1];
+            long totalExtractedSize = stats[2];
+
             // Update output information
-            updateOutputInfo(destDir, compressedSize, totalExtractedSize, "decompression");
-            
+            updateOutputInfo(outputDir, compressedSize, totalExtractedSize, "decompression");
+
             // Store the output directory reference
-            currentDecompressOutput = destDir;
-            
+            currentDecompressOutput = outputDir;
+
             System.out.println("✅ " + getCurrentTime() + " ZIP decompression completed!");
             System.out.println("═".repeat(60));
             System.out.printf("📊 Compressed size:   %s\n", formatBytes(compressedSize));
@@ -692,17 +531,17 @@ public class CompressTool {
             System.out.printf("📁 Files extracted:   %d\n", fileCount);
             System.out.printf("📁 Directories:       %d\n", dirCount);
             System.out.printf("⏱️  Time taken:        %d ms\n", (endTime - startTime));
-            
+
             // Display UPDATED file information with output details
             System.out.println("\n📋 UPDATED FILE INFORMATION");
             System.out.println("═".repeat(60));
             displayFileInfo(currentDecompressFile, "decompression");
-            
+
             // Update statistics
             totalOperations++;
             filesDecompressed++;
             saveStatistics();
-            
+
         } catch (IOException e) {
             System.out.println("\n❌ " + getCurrentTime() + " Error during ZIP decompression: " + e.getMessage());
         }
@@ -774,55 +613,7 @@ public class CompressTool {
         System.out.printf("Total: %d items\n", files.length);
     }
     
-    // Helper methods for ZIP operations
-    private static void zipDirectory(File directory, String baseName, ZipOutputStream zos) throws IOException {
-        File[] files = directory.listFiles();
-        if (files == null) return;
-        
-        for (File file : files) {
-            if (file.isDirectory()) {
-                zipDirectory(file, baseName + "/" + file.getName(), zos);
-            } else {
-                addFileToZip(file, baseName + "/" + file.getName(), zos);
-            }
-        }
-    }
-    
-    private static void addFileToZip(File file, String entryName, ZipOutputStream zos) throws IOException {
-        ZipEntry zipEntry = new ZipEntry(entryName);
-        zos.putNextEntry(zipEntry);
-        
-        try (FileInputStream fis = new FileInputStream(file)) {
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                zos.write(buffer, 0, bytesRead);
-            }
-        }
-        
-        zos.closeEntry();
-        System.out.println("  ➕ Added: " + entryName);
-    }
-    
-    private static long calculateTotalSize(File file) {
-        long size = 0;
-        try {
-            if (file.isFile()) {
-                return file.length();
-            } else if (file.isDirectory()) {
-                File[] files = file.listFiles();
-                if (files != null) {
-                    for (File f : files) {
-                        size += calculateTotalSize(f);
-                    }
-                }
-            }
-        } catch (SecurityException e) {
-            System.out.println("❌ Access denied to: " + file.getPath());
-        }
-        return size;
-    }
+
     
     private static String getCurrentTime() {
         return "[" + LocalTime.now().format(TIME_FORMATTER) + "]";
