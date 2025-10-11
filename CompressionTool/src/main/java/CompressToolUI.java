@@ -21,7 +21,92 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.*;
 
+import java.net.*;
+import java.io.*;
+import java.nio.file.*;
+import java.util.function.Consumer;
+
 public class CompressToolUI extends Application {
+
+    private static final String BACKEND_URL = "http://localhost:8081";
+
+    private void performApiOperation(String endpoint, File inputFile, boolean isDirectory, String path, Consumer<File> onSuccess, Consumer<String> onError) {
+        new Thread(() -> {
+            try {
+                URL url = new URL(BACKEND_URL + endpoint);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setDoOutput(true);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW");
+
+                String boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+                try (OutputStream os = conn.getOutputStream()) {
+                    if (isDirectory && path != null) {
+                        os.write(("--" + boundary + "\r\n").getBytes("UTF-8"));
+                        os.write(("Content-Disposition: form-data; name=\"path\"\r\n\r\n").getBytes("UTF-8"));
+                        os.write((path + "\r\n").getBytes("UTF-8"));
+                        os.write(("--" + boundary + "\r\n").getBytes("UTF-8"));
+                        os.write(("Content-Disposition: form-data; name=\"isDirectory\"\r\n\r\n").getBytes("UTF-8"));
+                        os.write(("true\r\n").getBytes("UTF-8"));
+                    } else if (inputFile != null) {
+                        os.write(("--" + boundary + "\r\n").getBytes("UTF-8"));
+                        os.write(("Content-Disposition: form-data; name=\"file\"; filename=\"" + inputFile.getName() + "\"\r\n").getBytes("UTF-8"));
+                        os.write(("Content-Type: " + Files.probeContentType(inputFile.toPath()) + "\r\n\r\n").getBytes("UTF-8"));
+                        try (InputStream is = new FileInputStream(inputFile)) {
+                            byte[] buffer = new byte[8192];
+                            int bytesRead;
+                            while ((bytesRead = is.read(buffer)) != -1) {
+                                os.write(buffer, 0, bytesRead);
+                            }
+                        }
+                        os.write("\r\n".getBytes("UTF-8"));
+                    }
+                    os.write(("--" + boundary + "--\r\n").getBytes("UTF-8"));
+                    os.flush();
+                }
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    String contentDisposition = conn.getHeaderField("Content-Disposition");
+                    String filename = "output";
+                    if (contentDisposition != null && contentDisposition.contains("filename=")) {
+                        filename = contentDisposition.split("filename=")[1].replace("\"", "");
+                    }
+                    File parentDir = inputFile != null ? inputFile.getParentFile() : new File(".");
+                    String baseName = filename.contains(".") ? filename.substring(0, filename.lastIndexOf('.')) : filename;
+                    String extension = filename.contains(".") ? filename.substring(filename.lastIndexOf('.')) : "";
+                    File outputFile = getUniqueOutputFile(parentDir, baseName, extension);
+
+                    try (InputStream is = conn.getInputStream();
+                         FileOutputStream fos = new FileOutputStream(outputFile)) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, bytesRead);
+                        }
+                    }
+
+                    onSuccess.accept(outputFile);
+                } else {
+                    String error = readStream(conn.getErrorStream());
+                    onError.accept("API Error: " + responseCode + " - " + error);
+                }
+            } catch (Exception e) {
+                onError.accept("Network Error: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private String readStream(InputStream is) throws IOException {
+        if (is == null) return "";
+        StringBuilder sb = new StringBuilder();
+        byte[] buffer = new byte[8192];
+        int bytesRead;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            sb.append(new String(buffer, 0, bytesRead));
+        }
+        return sb.toString();
+    }
 
     private File compressFile;
     private File decompressFile;
@@ -696,42 +781,39 @@ public class CompressToolUI extends Application {
         compressProgress.setProgress(0);
         compressProgressLabel.setText("0%");
 
-        new Thread(() -> {
-            try {
-                File outputFile = getUniqueOutputFile(compressFile.getParentFile(), compressFile.getName(), ".gz");
-                long originalSize = compressFile.length();
-                compressGZIP(compressFile, outputFile);
-                long compressedSize = outputFile.length();
-                long bytesSaved = originalSize - compressedSize;
+        compressProgress.setProgress(-1); // indeterminate
+        compressProgressLabel.setText("Processing...");
 
-                Platform.runLater(() -> {
-                    // Update output information
-                    updateOutputInfo("compress", outputFile, originalSize, compressedSize);
+        performApiOperation("/api/compression/compress/gzip", compressFile, false, null, outputFile -> {
+            long originalSize = compressFile.length();
+            long compressedSize = outputFile.length();
+            long bytesSaved = originalSize - compressedSize;
 
-                    // Simplified log message
-                    appendStatus("✅ File compressed successfully: " + outputFile.getName());
-                    
-                    // Update statistics
-                    totalOperations.incrementAndGet();
-                    filesCompressed.incrementAndGet();
-                    totalBytesSaved.addAndGet(bytesSaved);
-                    saveStatistics();
-                    refreshStatistics();
-
-                    showAlert(Alert.AlertType.INFORMATION, "Success",
-                            "File compressed successfully!\n\n" +
-                                    "Original: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
-                                    "Compressed: " + outputFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
-                                    "Space saved: " + formatFileSize(bytesSaved) + "\n" +
-                                    "Location: " + outputFile.getParent());
-                });
-            } catch (IOException ex) {
-                Platform.runLater(() -> {
-                    appendStatus("❌ Compression failed: " + compressFile.getName());
-                    showAlert(Alert.AlertType.ERROR, "Compression Failed", ex.getMessage());
-                });
-            }
-        }).start();
+            Platform.runLater(() -> {
+                updateOutputInfo("compress", outputFile, originalSize, compressedSize);
+                appendStatus("✅ File compressed successfully: " + outputFile.getName());
+                totalOperations.incrementAndGet();
+                filesCompressed.incrementAndGet();
+                totalBytesSaved.addAndGet(bytesSaved);
+                saveStatistics();
+                refreshStatistics();
+                compressProgress.setProgress(1);
+                compressProgressLabel.setText("100%");
+                showAlert(Alert.AlertType.INFORMATION, "Success",
+                        "File compressed successfully!\n\n" +
+                                "Original: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
+                                "Compressed: " + outputFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                                "Space saved: " + formatFileSize(bytesSaved) + "\n" +
+                                "Location: " + outputFile.getParent());
+            });
+        }, error -> {
+            Platform.runLater(() -> {
+                appendStatus("❌ Compression failed: " + error);
+                compressProgress.setProgress(0);
+                compressProgressLabel.setText("0%");
+                showAlert(Alert.AlertType.ERROR, "Compression Failed", error);
+            });
+        });
     }
 
     private void handleZipCompression() {
@@ -743,30 +825,25 @@ public class CompressToolUI extends Application {
         compressProgress.setProgress(0);
         compressProgressLabel.setText("0%");
 
-        new Thread(() -> {
-            try {
-                String baseName = compressFile.isDirectory() ? compressFile.getName() :
-                        compressFile.getName().substring(0, compressFile.getName().lastIndexOf('.'));
-                File outputFile = getUniqueOutputFile(compressFile.getParentFile(), baseName, ".zip");
+        compressProgress.setProgress(-1); // indeterminate
+        compressProgressLabel.setText("Processing...");
+
+        if (compressFile.isDirectory()) {
+            performApiOperation("/api/compression/compress/zip", null, true, compressFile.getAbsolutePath(), outputFile -> {
                 long originalSize = calculateTotalSize(compressFile);
-                compressZIP(compressFile, outputFile);
                 long compressedSize = outputFile.length();
                 long bytesSaved = originalSize - compressedSize;
 
                 Platform.runLater(() -> {
-                    // Update output information
                     updateOutputInfo("compress", outputFile, originalSize, compressedSize);
-
-                    // Simplified log message
                     appendStatus("✅ ZIP archive created successfully: " + outputFile.getName());
-                    
-                    // Update statistics
                     totalOperations.incrementAndGet();
                     filesCompressed.incrementAndGet();
                     totalBytesSaved.addAndGet(bytesSaved);
                     saveStatistics();
                     refreshStatistics();
-
+                    compressProgress.setProgress(1);
+                    compressProgressLabel.setText("100%");
                     showAlert(Alert.AlertType.INFORMATION, "Success",
                             "ZIP archive created successfully!\n\n" +
                                     "Source: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
@@ -774,13 +851,46 @@ public class CompressToolUI extends Application {
                                     "Space saved: " + formatFileSize(bytesSaved) + "\n" +
                                     "Location: " + outputFile.getParent());
                 });
-            } catch (IOException ex) {
+            }, error -> {
                 Platform.runLater(() -> {
-                    appendStatus("❌ ZIP compression failed: " + compressFile.getName());
-                    showAlert(Alert.AlertType.ERROR, "ZIP Compression Failed", ex.getMessage());
+                    appendStatus("❌ ZIP compression failed: " + error);
+                    compressProgress.setProgress(0);
+                    compressProgressLabel.setText("0%");
+                    showAlert(Alert.AlertType.ERROR, "ZIP Compression Failed", error);
                 });
-            }
-        }).start();
+            });
+        } else {
+            performApiOperation("/api/compression/compress/zip", compressFile, false, null, outputFile -> {
+                long originalSize = compressFile.length();
+                long compressedSize = outputFile.length();
+                long bytesSaved = originalSize - compressedSize;
+
+                Platform.runLater(() -> {
+                    updateOutputInfo("compress", outputFile, originalSize, compressedSize);
+                    appendStatus("✅ ZIP archive created successfully: " + outputFile.getName());
+                    totalOperations.incrementAndGet();
+                    filesCompressed.incrementAndGet();
+                    totalBytesSaved.addAndGet(bytesSaved);
+                    saveStatistics();
+                    refreshStatistics();
+                    compressProgress.setProgress(1);
+                    compressProgressLabel.setText("100%");
+                    showAlert(Alert.AlertType.INFORMATION, "Success",
+                            "ZIP archive created successfully!\n\n" +
+                                    "Source: " + compressFile.getName() + " (" + formatFileSize(originalSize) + ")\n" +
+                                    "Archive: " + outputFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                                    "Space saved: " + formatFileSize(bytesSaved) + "\n" +
+                                    "Location: " + outputFile.getParent());
+                });
+            }, error -> {
+                Platform.runLater(() -> {
+                    appendStatus("❌ ZIP compression failed: " + error);
+                    compressProgress.setProgress(0);
+                    compressProgressLabel.setText("0%");
+                    showAlert(Alert.AlertType.ERROR, "ZIP Compression Failed", error);
+                });
+            });
+        }
     }
 
     private void handleGzipDecompression() {
@@ -805,49 +915,37 @@ public class CompressToolUI extends Application {
         decompressProgress.setProgress(0);
         decompressProgressLabel.setText("0%");
 
-        new Thread(() -> {
-            try {
-                String originalName = decompressFile.getName();
-                String outputName = originalName.toLowerCase().endsWith(".gz") ?
-                        originalName.substring(0, originalName.length() - 3) + "_decompressed" :
-                        originalName + "_decompressed";
-                File outputFile = getUniqueOutputFile(decompressFile.getParentFile(), outputName, "");
+        decompressProgress.setProgress(-1); // indeterminate
+        decompressProgressLabel.setText("Processing...");
 
-                long compressedSize = decompressFile.length();
-                decompressGZIP(decompressFile, outputFile);
-                long decompressedSize = outputFile.length();
+        performApiOperation("/api/compression/decompress/gzip", decompressFile, false, null, outputFile -> {
+            long compressedSize = decompressFile.length();
+            long decompressedSize = outputFile.length();
 
-                Platform.runLater(() -> {
-                    // Update output information
-                    updateOutputInfo("decompress", outputFile, compressedSize, decompressedSize);
-
-                    // Simplified log message
-                    appendStatus("✅ File decompressed successfully: " + outputFile.getName());
-                    
-                    // Update statistics
-                    totalOperations.incrementAndGet();
-                    filesDecompressed.incrementAndGet();
-                    saveStatistics();
-                    refreshStatistics();
-
-                    showAlert(Alert.AlertType.INFORMATION, "Success",
-                            "File decompressed successfully!\n\n" +
-                                    "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
-                                    "Extracted: " + outputFile.getName() + " (" + formatFileSize(decompressedSize) + ")\n" +
-                                    "Location: " + outputFile.getParent() + "\n" +
-                                    "Full path: " + outputFile.getAbsolutePath());
-                });
-            } catch (IOException ex) {
-                Platform.runLater(() -> {
-                    appendStatus("❌ Decompression failed: " + decompressFile.getName());
-                    showAlert(Alert.AlertType.ERROR, "Decompression Failed",
-                            "Error: " + ex.getMessage() + "\n\nPlease check:\n" +
-                                    "• File permissions\n" +
-                                    "• Disk space\n" +
-                                    "• File integrity");
-                });
-            }
-        }).start();
+            Platform.runLater(() -> {
+                updateOutputInfo("decompress", outputFile, compressedSize, decompressedSize);
+                appendStatus("✅ File decompressed successfully: " + outputFile.getName());
+                totalOperations.incrementAndGet();
+                filesDecompressed.incrementAndGet();
+                saveStatistics();
+                refreshStatistics();
+                decompressProgress.setProgress(1);
+                decompressProgressLabel.setText("100%");
+                showAlert(Alert.AlertType.INFORMATION, "Success",
+                        "File decompressed successfully!\n\n" +
+                                "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                                "Extracted: " + outputFile.getName() + " (" + formatFileSize(decompressedSize) + ")\n" +
+                                "Location: " + outputFile.getParent() + "\n" +
+                                "Full path: " + outputFile.getAbsolutePath());
+            });
+        }, error -> {
+            Platform.runLater(() -> {
+                appendStatus("❌ Decompression failed: " + error);
+                decompressProgress.setProgress(0);
+                decompressProgressLabel.setText("0%");
+                showAlert(Alert.AlertType.ERROR, "Decompression Failed", error);
+            });
+        });
     }
 
     private void handleZipDecompression() {
@@ -863,43 +961,36 @@ public class CompressToolUI extends Application {
         decompressProgress.setProgress(0);
         decompressProgressLabel.setText("0%");
 
-        new Thread(() -> {
-            try {
-                String baseName = decompressFile.getName().replaceAll("\\.zip$", "");
-                if (baseName.equals(decompressFile.getName())) {
-                    baseName = decompressFile.getName() + "_extracted";
-                }
-                File outputDir = getUniqueOutputFile(decompressFile.getParentFile(), baseName, "_decompressed");
-                long compressedSize = decompressFile.length();
-                int[] extractionStats = decompressZIP(decompressFile, outputDir);
+        decompressProgress.setProgress(-1); // indeterminate
+        decompressProgressLabel.setText("Processing...");
 
-                Platform.runLater(() -> {
-                    // Update output information
-                    updateOutputInfo("decompress", outputDir, compressedSize, calculateTotalSize(outputDir));
+        performApiOperation("/api/compression/decompress/zip", decompressFile, false, null, outputFile -> {
+            long compressedSize = decompressFile.length();
+            long decompressedSize = outputFile.length(); // Note: this is the size of the zipped extracted, not the extracted size
 
-                    // Simplified log message
-                    appendStatus("✅ ZIP archive extracted successfully: " + outputDir.getName());
-                    
-                    // Update statistics
-                    totalOperations.incrementAndGet();
-                    filesDecompressed.incrementAndGet();
-                    saveStatistics();
-                    refreshStatistics();
-
-                    showAlert(Alert.AlertType.INFORMATION, "Success",
-                            "ZIP archive extracted successfully!\n\n" +
-                                    "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
-                                    "Extracted to: " + outputDir.getName() + "\n" +
-                                    "Files: " + extractionStats[0] + ", Folders: " + extractionStats[1] + "\n" +
-                                    "Location: " + outputDir.getParent());
-                });
-            } catch (IOException ex) {
-                Platform.runLater(() -> {
-                    appendStatus("❌ ZIP extraction failed: " + decompressFile.getName());
-                    showAlert(Alert.AlertType.ERROR, "ZIP Extraction Failed", ex.getMessage());
-                });
-            }
-        }).start();
+            Platform.runLater(() -> {
+                updateOutputInfo("decompress", outputFile, compressedSize, decompressedSize);
+                appendStatus("✅ ZIP archive extracted successfully: " + outputFile.getName());
+                totalOperations.incrementAndGet();
+                filesDecompressed.incrementAndGet();
+                saveStatistics();
+                refreshStatistics();
+                decompressProgress.setProgress(1);
+                decompressProgressLabel.setText("100%");
+                showAlert(Alert.AlertType.INFORMATION, "Success",
+                        "ZIP archive extracted successfully!\n\n" +
+                                "Archive: " + decompressFile.getName() + " (" + formatFileSize(compressedSize) + ")\n" +
+                                "Extracted to: " + outputFile.getName() + " (zipped)\n" +
+                                "Location: " + outputFile.getParent());
+            });
+        }, error -> {
+            Platform.runLater(() -> {
+                appendStatus("❌ ZIP extraction failed: " + error);
+                decompressProgress.setProgress(0);
+                decompressProgressLabel.setText("0%");
+                showAlert(Alert.AlertType.ERROR, "ZIP Extraction Failed", error);
+            });
+        });
     }
 
     private void setupDragAndDrop(Pane pane, String type) {
@@ -1091,187 +1182,23 @@ public class CompressToolUI extends Application {
         }
     }
 
-    private void compressGZIP(File sourceFile, File destFile) throws IOException {
-        try (FileInputStream fis = new FileInputStream(sourceFile);
-             FileOutputStream fos = new FileOutputStream(destFile);
-             GZIPOutputStream gzos = new GZIPOutputStream(fos)) {
 
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            long totalRead = 0;
-            long fileSize = sourceFile.length();
 
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                gzos.write(buffer, 0, bytesRead);
-                totalRead += bytesRead;
-                updateCompressProgress(totalRead, fileSize);
-            }
-            gzos.finish();
-            fos.flush();
-            fos.getFD().sync();
-        }
-    }
 
-    private void compressZIP(File source, File destFile) throws IOException {
-        try (FileOutputStream fos = new FileOutputStream(destFile);
-             ZipOutputStream zos = new ZipOutputStream(fos)) {
-            AtomicLong totalProcessed = new AtomicLong(0);
-            long totalSize = calculateTotalSize(source);
-            if (source.isDirectory()) {
-                zipDirectory(source, source, zos, totalSize, totalProcessed);
-            } else {
-                zipFile(source, source.getName(), zos, totalSize, totalProcessed);
-            }
-        } catch (IOException ex) {
-            throw ex;
-        }
-    }
 
-    private void zipDirectory(File directory, File baseDir, ZipOutputStream zos, long totalSize, AtomicLong totalProcessed) throws IOException {
-        File[] files = directory.listFiles();
-        if (files == null) return;
 
-        for (File file : files) {
-            if (file.isDirectory()) {
-                zipDirectory(file, baseDir, zos, totalSize, totalProcessed);
-            } else {
-                String entryName = getRelativePath(file, baseDir);
-                zipFile(file, entryName, zos, totalSize, totalProcessed);
-            }
-        }
-    }
 
-    private String getRelativePath(File file, File baseDir) {
-        String filePath = file.getAbsolutePath();
-        String basePath = baseDir.getAbsolutePath();
-        return filePath.substring(basePath.length() + 1).replace(File.separator, "/");
-    }
 
-    private void zipFile(File file, String entryName, ZipOutputStream zos, long totalSize, AtomicLong totalProcessed) throws IOException {
-        ZipEntry zipEntry = new ZipEntry(entryName);
-        zos.putNextEntry(zipEntry);
 
-        try (FileInputStream fis = new FileInputStream(file)) {
-            byte[] buffer = new byte[8192];
-            int bytesRead;
 
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                zos.write(buffer, 0, bytesRead);
-                totalProcessed.addAndGet(bytesRead);
-                updateCompressProgress(totalProcessed.get(), totalSize);
-            }
-        }
-        zos.closeEntry();
-    }
 
-    private void decompressGZIP(File sourceFile, File destFile) throws IOException {
-        File parentDir = destFile.getParentFile();
-        if (!parentDir.exists()) {
-            parentDir.mkdirs();
-        }
 
-        try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(sourceFile));
-             FileOutputStream fos = new FileOutputStream(destFile)) {
 
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            long totalRead = 0;
-            long fileSize = sourceFile.length();
 
-            while ((bytesRead = gzis.read(buffer)) != -1) {
-                fos.write(buffer, 0, bytesRead);
-                totalRead += bytesRead;
-                updateDecompressProgress(totalRead, fileSize);
-            }
 
-            fos.flush();
-            fos.getFD().sync();
-        }
 
-        if (!destFile.exists()) {
-            throw new IOException("Output file was not created: " + destFile.getAbsolutePath());
-        }
-        if (destFile.length() == 0) {
-            throw new IOException("Output file is empty: " + destFile.getAbsolutePath());
-        }
-    }
 
-    private int[] decompressZIP(File sourceFile, File destDir) throws IOException {
-        if (!destDir.exists()) {
-            destDir.mkdirs();
-        }
 
-        int fileCount = 0;
-        int dirCount = 0;
-        long totalSize = sourceFile.length();
-        long processedSize = 0;
-
-        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(sourceFile))) {
-            ZipEntry entry;
-
-            while ((entry = zis.getNextEntry()) != null) {
-                String filePath = destDir.getAbsolutePath() + File.separator + entry.getName();
-                File outputFile = new File(filePath);
-                String canonicalDestPath = destDir.getCanonicalPath();
-                String canonicalOutputPath = outputFile.getCanonicalPath();
-
-                if (!canonicalOutputPath.startsWith(canonicalDestPath + File.separator)) {
-                    String entryName = entry.getName();
-                    Platform.runLater(() -> {
-                        appendStatus("❌ ZIP Extraction failed: Potential zip slip attack detected for entry: " + entryName);
-                    });
-                    throw new IOException("Potential zip slip attack detected: " + entryName);
-                }
-
-                if (entry.isDirectory()) {
-                    outputFile.mkdirs();
-                    dirCount++;
-                } else {
-                    File parent = outputFile.getParentFile();
-                    if (!parent.exists()) {
-                        parent.mkdirs();
-                    }
-
-                    try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                        byte[] buffer = new byte[8192];
-                        int bytesRead;
-                        while ((bytesRead = zis.read(buffer)) != -1) {
-                            fos.write(buffer, 0, bytesRead);
-                            processedSize += bytesRead;
-                            updateDecompressProgress(processedSize, totalSize);
-                        }
-                        fos.flush();
-                        fos.getFD().sync();
-                    }
-                    fileCount++;
-                }
-                zis.closeEntry();
-            }
-        }
-        return new int[]{fileCount, dirCount};
-    }
-
-    private void updateCompressProgress(long current, long total) {
-        double progress = total > 0 ? (double) current / total : 0;
-        int percentage = (int) (progress * 100);
-        Platform.runLater(() -> {
-            if ((int) (compressProgress.getProgress() * 100) != percentage) {
-                compressProgress.setProgress(progress);
-                compressProgressLabel.setText(String.format("%d%%", percentage));
-            }
-        });
-    }
-
-    private void updateDecompressProgress(long current, long total) {
-        double progress = total > 0 ? (double) current / total : 0;
-        int percentage = (int) (progress * 100);
-        Platform.runLater(() -> {
-            if ((int) (decompressProgress.getProgress() * 100) != percentage) {
-                decompressProgress.setProgress(progress);
-                decompressProgressLabel.setText(String.format("%d%%", percentage));
-            }
-        });
-    }
 
     private long calculateTotalSize(File file) {
         long size = 0;

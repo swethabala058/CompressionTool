@@ -1,9 +1,14 @@
 package com.example.compressiontool;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import com.example.compressiontool.Activity;
+import com.example.compressiontool.OperationType;
 
 import java.io.*;
 import java.nio.file.Files;
+import java.time.LocalDateTime;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -12,9 +17,13 @@ import java.util.zip.*;
 @Service
 public class CompressionService {
 
+    @Autowired
+    private ActivityRepository activityRepository;
+
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public void compressGZIP(File sourceFile, File destFile) throws IOException {
+        long originalSize = sourceFile.length();
         try (FileInputStream fis = new FileInputStream(sourceFile);
              FileOutputStream fos = new FileOutputStream(destFile);
              GZIPOutputStream gzos = new GZIPOutputStream(fos)) {
@@ -28,11 +37,22 @@ public class CompressionService {
             fos.flush();
             fos.getFD().sync();
         }
+
+        long compressedSize = destFile.length();
+
+        Activity activity = new Activity();
+        activity.setOperationType(OperationType.COMPRESS_GZIP);
+        activity.setFileName(sourceFile.getName());
+        activity.setOriginalSize(originalSize);
+        activity.setResultSize(compressedSize);
+        activity.setTimestamp(LocalDateTime.now());
+        activityRepository.save(activity);
     }
 
     public long decompressGZIP(File sourceFile, File destFile) throws IOException {
         Files.createDirectories(destFile.getParentFile().toPath());
 
+        long originalSize = sourceFile.length();
         long decompressedSize = 0;
         try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(sourceFile));
              FileOutputStream fos = new FileOutputStream(destFile)) {
@@ -51,10 +71,19 @@ public class CompressionService {
             throw new IOException("Output file was not created or is empty");
         }
 
+        Activity activity = new Activity();
+        activity.setOperationType(OperationType.DECOMPRESS_GZIP);
+        activity.setFileName(sourceFile.getName());
+        activity.setOriginalSize(originalSize);
+        activity.setResultSize(decompressedSize);
+        activity.setTimestamp(LocalDateTime.now());
+        activityRepository.save(activity);
+
         return decompressedSize;
     }
 
     public void compressZIP(File source, File destFile) throws IOException {
+        long originalSize = calculateTotalSize(source);
         try (FileOutputStream fos = new FileOutputStream(destFile);
              ZipOutputStream zos = new ZipOutputStream(fos)) {
 
@@ -64,6 +93,16 @@ public class CompressionService {
                 addFileToZip(source, source.getName(), zos);
             }
         }
+
+        long compressedSize = destFile.length();
+
+        Activity activity = new Activity();
+        activity.setOperationType(OperationType.COMPRESS_ZIP);
+        activity.setFileName(source.getName());
+        activity.setOriginalSize(originalSize);
+        activity.setResultSize(compressedSize);
+        activity.setTimestamp(LocalDateTime.now());
+        activityRepository.save(activity);
     }
 
     public long[] decompressZIP(File sourceFile, File destDir) throws IOException {
@@ -71,6 +110,7 @@ public class CompressionService {
             destDir.mkdirs();
         }
 
+        long originalSize = sourceFile.length();
         int fileCount = 0;
         int dirCount = 0;
         long totalExtractedSize = 0;
@@ -108,6 +148,15 @@ public class CompressionService {
                 zis.closeEntry();
             }
         }
+
+        Activity activity = new Activity();
+        activity.setOperationType(OperationType.DECOMPRESS_ZIP);
+        activity.setFileName(sourceFile.getName());
+        activity.setOriginalSize(originalSize);
+        activity.setResultSize(totalExtractedSize);
+        activity.setTimestamp(LocalDateTime.now());
+        activityRepository.save(activity);
+
         return new long[]{fileCount, dirCount, totalExtractedSize};
     }
 

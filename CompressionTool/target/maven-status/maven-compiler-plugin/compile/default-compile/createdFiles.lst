@@ -1,5 +1,11 @@
-com\example\compressiontool\CompressionService.class
-com\example\compressiontool\CompressionController.class
+com\example\compressiontool\Activity.class
+com\example\compressiontool\DBConnectionTest.class
 com\example\compressiontool\CompressionToolApplication.class
+com\example\compressiontool\ActivityRepository.class
+com\example\compressiontool\CompressionStatsRepository.class
+com\example\compressiontool\CompressionService.class
+com\example\compressiontool\CompressionStats.class
+com\example\compressiontool\OperationType.class
+com\example\compressiontool\CompressionController.class
 CompressTool.class
 CompressToolUI.class

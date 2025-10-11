@@ -11,12 +11,12 @@ set PATH=%MAVEN_HOME%\bin;%PATH%
 echo Starting Compression Tool - Backend and UI...
 
 REM Start Spring Boot backend in background
-start "Spring Boot Backend" cmd /c "mvn spring-boot:run"
+start "Spring Boot Backend" cmd /k "set MAVEN_HOME=%MAVEN_HOME% && set PATH=%PATH% && %MAVEN_HOME%\bin\mvn.cmd spring-boot:run"
 
-REM Wait a moment for backend to start
-timeout /t 5 /nobreak > nul
+REM Wait for backend to start (increased to 10 seconds for reliability)
+timeout /t 10 /nobreak > nul
 
 REM Run the JavaFX UI
-mvn clean javafx:run
+%MAVEN_HOME%\bin\mvn.cmd clean javafx:run
 
 pause

@@ -13,3 +13,17 @@
 - [x] Run Spring Boot application
 - [x] Verify UI still works (batch file runs UI successfully)
 - [x] Update run_compression_tool.bat to include backend startup
+- [x] Add PostgreSQL JDBC driver and Spring Data JPA dependencies to pom.xml
+- [x] Create application.properties with JDBC URL configuration
+- [x] Test database connection
+
+## UI-Backend Integration for Database Persistence
+- [ ] Update run_compression_tool.bat to keep backend terminal open (cmd /k)
+- [ ] Refactor CompressToolUI.java: Add HttpClient imports and remove local compression/decompression methods
+- [ ] Refactor CompressToolUI.java: Update handleGzipCompression to POST to /api/compression/compress/gzip and handle response
+- [ ] Refactor CompressToolUI.java: Update handleZipCompression to POST to /api/compression/compress/zip and handle response
+- [ ] Refactor CompressToolUI.java: Update handleGzipDecompression to POST to /api/compression/decompress/gzip and handle response
+- [ ] Refactor CompressToolUI.java: Update handleZipDecompression to POST to /api/compression/decompress/zip and handle response
+- [ ] Refactor CompressToolUI.java: Simplify progress tracking (indeterminate during API calls)
+- [ ] Refactor CompressToolUI.java: Update statistics based on API response metadata
+- [ ] Rebuild and test: Run batch file, perform operations in UI, verify data in pgAdmin
